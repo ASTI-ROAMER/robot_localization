@@ -65,7 +65,8 @@ namespace RobotLocalization
     utm_zone_(0),
     world_frame_id_("odom"),
     transform_timeout_(ros::Duration(0)),
-    tf_listener_(tf_buffer_)
+    tf_listener_(tf_buffer_),
+    publish_baselink_gps_(true)
   {
     ROS_INFO("Waiting for valid clock time...");
     ros::Time::waitForValid();
@@ -184,6 +185,10 @@ namespace RobotLocalization
 
     gps_odom_pub_ = nh.advertise<nav_msgs::Odometry>("odometry/gps", 10);
 
+    if (publish_baselink_gps_){
+      baselink_gps_pub_ = nh.advertise<sensor_msgs::NavSatFix>("gps/baselink", 10);
+    }
+
     if (publish_gps_)
     {
       filtered_gps_pub_ = nh.advertise<sensor_msgs::NavSatFix>("gps/filtered", 10);
@@ -217,9 +222,11 @@ namespace RobotLocalization
     else
     {
       nav_msgs::Odometry gps_odom;
-      if (prepareGpsOdometry(gps_odom))
+      sensor_msgs::NavSatFix baselink_gps;
+      if (prepareGpsOdometry(gps_odom, baselink_gps))
       {
         gps_odom_pub_.publish(gps_odom);
+        baselink_gps_pub_.publish(baselink_gps);
       }
 
       if (publish_gps_)
@@ -607,6 +614,8 @@ namespace RobotLocalization
         ROS_WARN_STREAM_THROTTLE(5.0, "Could not obtain " << world_frame_id_ << "->" << base_link_frame_id_ <<
           " transform. Will not remove offset of navsat device from robot's origin.");
       }
+      // robot_odom_pose = gps_odom_pose * gps_offset_rotated;
+      // robot_odom_pose.setRotation(tf2::Quaternion::getIdentity());
     }
     else
     {
@@ -666,6 +675,7 @@ namespace RobotLocalization
       }
       latest_cartesian_pose_.setOrigin(tf2::Vector3(cartesian_x, cartesian_y, msg->altitude));
       latest_cartesian_covariance_.setZero();
+      latest_cartesian_covariance_type_ = sensor_msgs::NavSatFix::COVARIANCE_TYPE_UNKNOWN;
 
       // Copy the measurement's covariance matrix so that we can rotate it later
       for (size_t i = 0; i < POSITION_SIZE; i++)
@@ -675,6 +685,7 @@ namespace RobotLocalization
           latest_cartesian_covariance_(i, j) = msg->position_covariance[POSITION_SIZE * i + j];
         }
       }
+      latest_cartesian_covariance_type_ = msg->position_covariance_type;
 
       gps_update_time_ = msg->header.stamp;
       gps_updated_ = true;
@@ -810,7 +821,7 @@ namespace RobotLocalization
     return new_data;
   }
 
-  bool NavSatTransform::prepareGpsOdometry(nav_msgs::Odometry &gps_odom)
+  bool NavSatTransform::prepareGpsOdometry(nav_msgs::Odometry &gps_odom, sensor_msgs::NavSatFix &baselink_gps)
   {
     bool new_data = false;
 
@@ -842,6 +853,22 @@ namespace RobotLocalization
 
       // Rotate the covariance
       latest_cartesian_covariance_ = rot_6d * latest_cartesian_covariance_.eval() * rot_6d.transpose();
+
+
+      // Fill message for baselink_gps
+      // geometry_msgs::Point& pt = gps_odom.pose.pose.position;
+      mapToLL(transformed_cartesian_robot.getOrigin(), baselink_gps.latitude, baselink_gps.longitude, baselink_gps.altitude);
+
+      // Copy the back the latest_cartesian_covariance_ into gps position covariance
+      for (size_t i = 0; i < POSITION_SIZE; i++)
+      {
+        for (size_t j = 0; j < POSITION_SIZE; j++)
+        {
+          baselink_gps.position_covariance[POSITION_SIZE*i + j] = latest_cartesian_covariance_(i, j);
+        }
+      }
+      baselink_gps.position_covariance_type = latest_cartesian_covariance_type_;
+
 
       // Now fill out the message. Set the orientation to the identity.
       tf2::toMsg(transformed_cartesian_robot, gps_odom.pose.pose);

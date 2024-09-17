@@ -135,7 +135,7 @@ class NavSatTransform
     //! @brief Prepares the GPS odometry message before sending
     //! @param[out] gps_odom The odometry message to prepare
     //!
-    bool prepareGpsOdometry(nav_msgs::Odometry &gps_odom);
+    bool prepareGpsOdometry(nav_msgs::Odometry &gps_odom, sensor_msgs::NavSatFix &baselink_gps);
 
     //! @brief Used for setting the GPS data that will be used to compute the transform
     //! @param[in] msg The NavSatFix message to use in the transform
@@ -379,6 +379,18 @@ class NavSatTransform
     //! @brief Used for publishing the static world_frame->cartesian transform
     //!
     tf2_ros::StaticTransformBroadcaster cartesian_broadcaster_;
+
+    //! @brief Whether or not we publish the offset corrected baselink gps from the raw input gps
+    //!
+    bool publish_baselink_gps_;
+
+    //! @brief Publisher for offset-corrected gps data for base_link
+    //!
+    ros::Publisher baselink_gps_pub_;
+
+    //! @brief the latest covariance type
+    //!
+    uint8_t latest_cartesian_covariance_type_;
 };
 
 }  // namespace RobotLocalization
